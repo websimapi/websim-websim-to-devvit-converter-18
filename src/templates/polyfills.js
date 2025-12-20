@@ -302,6 +302,17 @@ class WebsimSocket {
                 }
                 return;
             }
+
+            // 1.5 Handle Batch Dump (Handshake Response)
+            if (payload.type === 'batch_dump') {
+                const results = payload.data || {};
+                Object.entries(results).forEach(([colName, colData]) => {
+                    if (this.collections[colName]) {
+                        this.collections[colName]._handleDump(colData);
+                    }
+                });
+                return;
+            }
             
             // 2. Handle DB Sync (Realtime broadcast from server)
             if (payload.type === 'db_sync') {
@@ -338,9 +349,25 @@ class WebsimSocket {
                 username: this.peers[this.clientId].username,
                 avatarUrl: this.peers[this.clientId].avatarUrl
             });
+            
+            // Trigger Handshake
+            this.sendHandshake();
         }, 1000);
         
         return Promise.resolve();
+    }
+
+    sendHandshake() {
+        // Collect all currently registered collections
+        const colNames = Object.keys(this.collections);
+        // Send directly to parent (bypass socket wrapper to ensure top-level handling if needed, but wrapper is fine too)
+        // We use the wrapper format so app.js can process it easily or we can use raw.
+        // The server expects raw 'webViewReady' or inside socket msg? 
+        // Our server code looks for msg.type === 'webViewReady' at top level.
+        window.parent.postMessage({ 
+            type: 'webViewReady', 
+            payload: { collections: colNames } 
+        }, '*');
     }
 
     updatePresence(update) {

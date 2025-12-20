@@ -55,6 +55,28 @@ Devvit.addCustomPostType({
                   }
               };
           }
+
+          if (type === 'batch_load') {
+              const results = {};
+              const collections = payload.collections || [];
+              console.log(\`[Redis] Batch loading \${collections.length} collections...\`);
+              
+              for (const name of collections) {
+                  const key = \`websim:data:\${name}\`;
+                  try {
+                      const data = await context.redis.hGetAll(key);
+                      results[name] = data || {};
+                  } catch(e) {
+                      results[name] = {};
+                  }
+              }
+              return { 
+                  reqId: serverReq.id, 
+                  success: true, 
+                  action: 'send_batch_dump', 
+                  data: results 
+              };
+          }
           
           if (type === 'db_op') {
               if (payload.cmd === 'create' || payload.cmd === 'update') {
@@ -94,6 +116,14 @@ Devvit.addCustomPostType({
         if (serverResponse.success) {
             if (serverResponse.action === 'send_dump') {
                 context.ui.webView.postMessage('gameview_' + key, serverResponse.data);
+            } else if (serverResponse.action === 'send_batch_dump') {
+                context.ui.webView.postMessage('gameview_' + key, {
+                    type: 'WEBSIM_SOCKET_EVT',
+                    payload: {
+                        type: 'batch_dump',
+                        data: serverResponse.data
+                    }
+                });
             } else if (serverResponse.action === 'broadcast_op') {
                 // Broadcast change via Realtime
                 channel.send({
@@ -123,7 +153,18 @@ Devvit.addCustomPostType({
             }
             if (!msg || typeof msg !== 'object') return;
 
-            // 0. Handle User Context Request
+            // 0. Handle Handshake (WebView Ready)
+            if (msg.type === 'webViewReady') {
+                const collections = msg.payload?.collections || [];
+                setServerReq({
+                    id: Math.random(),
+                    type: 'batch_load',
+                    payload: { collections }
+                });
+                return;
+            }
+
+            // 0.5 Handle User Context Request
             if (msg.type === 'get_user_context') {
               try {
                 const currUser = await context.reddit.getCurrentUser();
