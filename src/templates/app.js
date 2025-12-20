@@ -77,7 +77,7 @@ Devvit.addCustomPostType({
     const channel = useChannel({
       name: 'websim_global',
       onMessage: (msg) => {
-        context.ui.webView.postMessage('gameview', {
+        context.ui.webView.postMessage('gameview_' + key, {
           type: 'WEBSIM_SOCKET_EVT',
           payload: msg
         });
@@ -93,7 +93,7 @@ Devvit.addCustomPostType({
         
         if (serverResponse.success) {
             if (serverResponse.action === 'send_dump') {
-                context.ui.webView.postMessage('gameview', serverResponse.data);
+                context.ui.webView.postMessage('gameview_' + key, serverResponse.data);
             } else if (serverResponse.action === 'broadcast_op') {
                 // Broadcast change via Realtime
                 channel.send({
@@ -110,7 +110,7 @@ Devvit.addCustomPostType({
     return (
       <vstack height="100%" width="100%" alignment="center middle">
         <webview
-          id="gameview"
+          id={'gameview_' + key}
           grow
           url="${webviewPath}"
           width="100%"
@@ -127,7 +127,7 @@ Devvit.addCustomPostType({
             if (msg.type === 'get_user_context') {
               try {
                 const currUser = await context.reddit.getCurrentUser();
-                context.ui.webView.postMessage('gameview', JSON.stringify({
+                context.ui.webView.postMessage('gameview_' + key, JSON.stringify({
                   type: 'set_user_context',
                   payload: {
                     id: currUser.id,
@@ -136,7 +136,7 @@ Devvit.addCustomPostType({
                   }
                 }));
               } catch (e) {
-                context.ui.webView.postMessage('gameview', JSON.stringify({
+                context.ui.webView.postMessage('gameview_' + key, JSON.stringify({
                   type: 'set_user_context',
                   payload: {
                     id: 'anon',
