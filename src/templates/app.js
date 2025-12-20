@@ -22,7 +22,7 @@ Devvit.addCustomPostType({
     const [serverReq, setServerReq] = useState({ id: 0, type: '', payload: null });
 
     // Server-Side Processor
-    // This hook runs on the server/worker when 'serverReq' changes.
+    // This hook runs on the server/worker when 'serverReq.id' changes.
     // It solves "ServerCallRequired" errors by ensuring Redis is accessed from the correct context.
     const { data: serverResponse } = useAsync(async () => {
       if (!serverReq.type || serverReq.id === 0) return null;
@@ -32,6 +32,11 @@ Devvit.addCustomPostType({
       const redisKey = \`websim:data:\${collectionName}\`;
 
       try {
+          // Explicitly check context availability
+          if (!context || !context.redis) {
+              throw new Error('Redis context unavailable inside useAsync');
+          }
+
           if (type === 'db_load') {
               const data = await context.redis.hGetAll(redisKey);
               const count = data ? Object.keys(data).length : 0;
@@ -63,32 +68,32 @@ Devvit.addCustomPostType({
       } catch (e) {
           console.error('[Redis] Server Operation Error:', e);
           // Return failure but with ID so we stop retry loops
-          return { reqId: serverReq.id, success: false };
+          return { reqId: serverReq.id, success: false, error: String(e) };
       }
       return null;
-    }, { depends: [serverReq] });
+    }, { depends: [serverReq.id] });
 
     // Realtime Channel Bridge
     const channel = useChannel({
       name: 'websim_global',
       onMessage: (msg) => {
-        context.ui.webView.postMessage('gameview', JSON.stringify({
+        context.ui.webView.postMessage('gameview', {
           type: 'WEBSIM_SOCKET_EVT',
           payload: msg
-        }));
+        });
       },
     });
 
     channel.subscribe();
 
     // Effect-like Logic: Handle Async Response
-    // If the server operation finished, we process the side effects (UI messaging / Broadcasting)
-    if (serverResponse && serverResponse.reqId !== lastProcessedReqId && serverResponse.reqId === serverReq.id) {
+    // We strictly check reqId to avoid reprocessing
+    if (serverResponse && serverResponse.reqId !== lastProcessedReqId) {
         setLastProcessedReqId(serverResponse.reqId);
         
         if (serverResponse.success) {
             if (serverResponse.action === 'send_dump') {
-                context.ui.webView.postMessage('gameview', JSON.stringify(serverResponse.data));
+                context.ui.webView.postMessage('gameview', serverResponse.data);
             } else if (serverResponse.action === 'broadcast_op') {
                 // Broadcast change via Realtime
                 channel.send({
@@ -97,6 +102,8 @@ Devvit.addCustomPostType({
                     op: serverResponse.payload
                 });
             }
+        } else {
+           console.error(\`[WebSim] Server Request Failed: \${serverResponse.error || 'Unknown'}\`);
         }
     }
 

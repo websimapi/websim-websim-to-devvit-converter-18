@@ -133,14 +133,15 @@ class WebsimCollection {
 
     _requestLoad(attempt = 0) {
         // Wait slightly for socket/bridge to stabilize
-        const delay = attempt === 0 ? 1000 : 2000;
+        // Exponential backoff to prevent flooding Devvit server which causes "ServerCallRequired"
+        const delay = attempt === 0 ? 1000 : Math.min(2000 * Math.pow(1.5, attempt), 10000);
         
         setTimeout(() => {
             if (this.loaded) return;
             
             // If still not loaded after a few tries, log warning but keep trying
-            if (attempt > 0 && attempt % 3 === 0) {
-                 console.warn(\`[WebSim Socket] Still waiting for data: \${this.name} (attempt \${attempt})\`);
+            if (attempt > 0 && attempt % 2 === 0) {
+                 console.log(\`[WebSim Socket] Syncing \${this.name}... (attempt \${attempt})\`);
             }
             
             this.socket._sendInternal('db_load', { collection: this.name });
@@ -149,7 +150,7 @@ class WebsimCollection {
             if (attempt < 10) {
                 this._retryTimer = setTimeout(() => {
                     if (!this.loaded) this._requestLoad(attempt + 1);
-                }, 3000); // 3s timeout for response
+                }, 5000 + (attempt * 1000)); // Increase timeout for response
             }
         }, delay);
     }
@@ -566,8 +567,16 @@ export const websimStubsJs = `
         // Polyfill upload to prevent crashes
         upload: async (blob) => {
             console.warn('[WebSim Stub] window.websim.upload called. Uploads are not fully supported in WebView.');
-            // Return a local Blob URL to satisfy the promise (image will display, but won't persist)
-            return URL.createObjectURL(blob);
+            
+            // Blob URLs can sometimes trigger CSP violations in Devvit.
+            // If it's an image, we try to create a data URL instead if it's small, 
+            // but for now, we just return the blob URL and hope CSP allows it for <img src>
+            try {
+                return URL.createObjectURL(blob);
+            } catch(e) {
+                console.error('Failed to create object URL', e);
+                return '';
+            }
         },
         // Generic internal stubs
         internal: {
