@@ -239,7 +239,8 @@ export class AssetAnalyzer {
         const extractedScripts = [];
         let scriptCounter = 0;
 
-        // Ensure DOCTYPE
+        // Ensure DOCTYPE (FIX for Quirks Mode)
+        // Must be the very first characters
         if (!html.trim().toLowerCase().startsWith('<!doctype')) {
             html = '<!DOCTYPE html>\n' + html;
         }
@@ -255,11 +256,13 @@ export class AssetAnalyzer {
             return '<!-- Import Map Removed by Converter -->';
         });
 
-        // 2. Inject Polyfills (Logger, Socket) - Now extracted to separate files in client/
-        // We will inject <script src="./logger.js"></script> etc.
-        const polyfills = `<script type="module" src="./logger.js"></script>\n    <script type="module" src="./websim_stubs.js"></script>\n    <script type="module" src="./websim_socket.js"></script>`;
+        // 2. Inject Polyfills (Logger, Socket)
+        // We inject as a single module to satisfy Vite's bundler, while maintaining global side-effects.
+        const polyfills = `
+    <script type="module" src="./websim_polyfills.js"></script>`;
+    
         if (html.includes('<head>')) {
-            html = html.replace('<head>', '<head>\n    ' + polyfills);
+            html = html.replace('<head>', '<head>' + polyfills);
         } else {
             html = polyfills + '\n' + html;
         }
@@ -270,12 +273,19 @@ export class AssetAnalyzer {
             const srcMatch = attrs.match(/src=["']([^"']+)["']/i);
             if (srcMatch) {
                 const src = srcMatch[1];
-                // If remote script (http), try to map it? 
-                // Vite doesn't like remote scripts in index.html unless ignored.
-                // Best practice: Download it or ignore. 
-                // For this converter, we'll leave it, but warn?
-                // Actually, strict CSP means we should probably leave it and let Devvit block it or user fix it.
-                // But better: if it's a library, we might have mapped it? No, script tags are hard to map to npm deps automatically without import map.
+                // Remote scripts: Leave as is (Devvit/CSP will handle blocking)
+                if (src.match(/^(https?:|\/\/)/i)) return match;
+                
+                // Local scripts: Ensure type="module" so Vite bundles them
+                if (!attrs.includes('type="module"')) {
+                    let newTag = match;
+                    if (attrs.includes('type=')) {
+                         newTag = newTag.replace(/type=["'](text\/javascript|application\/javascript)["']/i, 'type="module"');
+                    } else {
+                         newTag = newTag.replace(/<script/i, '<script type="module"');
+                    }
+                    return newTag;
+                }
                 return match; 
             }
 
@@ -293,10 +303,10 @@ export class AssetAnalyzer {
             const processedContent = this.processJS(content, newScriptName);
             extractedScripts.push({ filename: newScriptName, content: processedContent });
 
-            // Force type="module" for Vite compatibility usually, or just keep original type?
-            // If it has imports, it must be module.
+            // Force type="module" for all scripts to ensure consistent execution order (deferred)
+            // with the polyfills which are also modules.
             let newAttrs = attrs;
-            if (processedContent.includes('import ') && !newAttrs.includes('type="module"')) {
+            if (!newAttrs.includes('type="module"')) {
                 newAttrs += ' type="module"';
             }
 

@@ -2,7 +2,7 @@ export const validateScript = `
 import fs from 'fs';
 import path from 'path';
 
-const WEBROOT = './webroot';
+const WEBROOT = './dist/client';
 
 function walk(dir, callback) {
   if (!fs.existsSync(dir)) return;
@@ -16,6 +16,22 @@ function walk(dir, callback) {
       callback(filepath, stats);
     }
   });
+}
+
+console.log('🔍 Verifying Project Integrity...');
+
+const SERVER_BUILD = './dist/server/index.cjs';
+if (!fs.existsSync(SERVER_BUILD)) {
+    console.error('❌ Server build missing at ' + SERVER_BUILD);
+    console.error('   Expected: dist/server/index.cjs');
+    if (fs.existsSync('./dist/server')) {
+        console.log('   Contents of ./dist/server:', fs.readdirSync('./dist/server'));
+    } else {
+        console.log('   Folder ./dist/server does not exist.');
+    }
+    console.error('   The app will fail to upload. Check "npm run build:server" output.');
+} else {
+    console.log('✅ Server build found at dist/server/index.cjs');
 }
 
 console.log('🔍 Verifying Webroot Integrity...');
@@ -69,10 +85,14 @@ files.forEach(fileObj => {
         // Check for http/https usage in imports/scripts
         // Only warn if it looks like a script source or import, avoiding common XML namespaces
         // We look for 'from "http' or 'src="http' specifically.
-        // We use a regex that avoids matching "http://www.w3.org..." used in createElementNS
-        if (content.match(/from\\s+['"]http/i) || content.match(/src\\s*=\\s*['"]http(?!:\\/\\/www\\.w3\\.org)/i)) {
+        // We use a regex that avoids matching "http://www.w3.org..." or redditstatic
+        // Updated to handle https and be robust against replacement strings
+        const remoteMatch = content.match(/src\\s*=\\s*['"](https?:\\/\\/(?!(www\\.w3\\.org|(\\w+\\.)?redditstatic\\.com|images\\.websim\\.ai|images\\.websim\\.com))[^'"]+)['"]/i);
+        const importMatch = content.match(/from\\s+['"](http[^'"]+)/i);
+
+        if (importMatch || remoteMatch) {
             console.warn(\`⚠️  Possible remote import in \${f}. Devvit may block this.\`);
-            const match = content.match(/(?:from|src\\s*=\\s*)['"](http[^'"]+)/i);
+            const match = importMatch || remoteMatch;
             if (match) console.warn(\`   Target: \${match[1]}\`);
             issues++;
         }
@@ -87,6 +107,12 @@ files.forEach(fileObj => {
                      issues++;
                  }
              }
+        }
+
+        // Check for eval()
+        if (content.includes('eval(')) {
+             console.warn(\`⚠️  Dangerous 'eval()' usage detected in \${f}. This will likely be blocked by CSP.\`);
+             issues++;
         }
     }
 });
@@ -165,10 +191,29 @@ try {
     console.warn('   If the build fails, try running "npm install" manually.');
 }
 
-// 3. Build Client (Vite)
-console.log('🔨 Building Game Client...');
+// 3. Build Project (Server & Client)
+console.log('🔨 Building Project...');
 try {
-    execSync('npm run build:client', { stdio: 'inherit' });
+    execSync('npm run build', { stdio: 'inherit' });
+    
+    // Verify build output immediately
+    if (!fs.existsSync('dist/server/index.cjs')) {
+        console.error('❌ Server build validation failed!');
+        console.log('   The local build (npm run build:server) failed to produce output.');
+        console.log('   This usually means there is a syntax error in the server code.');
+        process.exit(1);
+    }
+
+    // Verify Config
+    if (fs.existsSync('devvit.json')) {
+        const config = fs.readFileSync('devvit.json', 'utf8');
+        if (!config.includes('"entry": "index.cjs"')) {
+             console.warn('⚠️  devvit.json might have incorrect server entry path (expected "index.cjs").');
+        }
+    } else {
+        console.warn('⚠️  devvit.json not found');
+    }
+
 } catch(e) {
     console.error('❌ Build failed!');
     process.exit(1);
